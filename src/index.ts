@@ -1,5 +1,12 @@
 import type { Validator, ChainInfo, ValidatorResponse, KeybaseResponse } from './types';
 
+/* Headers */
+const corsHeaders = {
+	'Access-Control-Allow-Origin': '*',
+	'Access-Control-Allow-Methods': 'GET, OPTIONS',
+	'Access-Control-Allow-Headers': '*',
+};
+
 /* Constants */
 enum ValidChainIds {
 	MAINNET = 'xion-mainnet-1',
@@ -120,6 +127,13 @@ async function fetchValidatorImages(validators: Validator[]) {
 /* Main */
 export default {
 	async fetch(request, env, ctx): Promise<Response> {
+		if (request.method === 'OPTIONS') {
+			return new Response(null, {
+				status: 204,
+				headers: corsHeaders,
+			});
+		}
+
 		try {
 			// fetch chain id from params
 			const url = new URL(request.url);
@@ -163,6 +177,7 @@ export default {
 				{
 					status: 200,
 					headers: {
+						...corsHeaders,
 						'Content-Type': 'application/json',
 						'Cache-Control': 'public, max-age=3600',
 					},
@@ -177,7 +192,10 @@ export default {
 				}),
 				{
 					status: 500,
-					headers: { 'Content-Type': 'application/json' },
+					headers: {
+						...corsHeaders,
+						'Content-Type': 'application/json',
+					},
 				}
 			);
 		}
