@@ -51,7 +51,7 @@ The API returns appropriate HTTP status codes with JSON error messages:
 
 ```bash
 # Install dependencies
-npm install
+pnpm install
 
 # Start development server
 wrangler dev
