@@ -24,7 +24,14 @@ const VALIDATOR_LIST_PAGE_SIZE = 50;
 const fetchChainInfo = async (chainId: ValidChainIds) => {
 	const url = chainInfoURLMap[chainId];
 	const response = await fetch(url);
-	return response.json() as Promise<ChainInfo>;
+	const data = (await response.json()) as ChainInfo;
+
+	// Validate required fields
+	if (!data.apis?.rest?.[0]?.address) {
+		throw new Error('Invalid chain info: missing REST API endpoint');
+	}
+
+	return data;
 };
 
 /**
@@ -33,29 +40,31 @@ const fetchChainInfo = async (chainId: ValidChainIds) => {
  * @returns The validator list
  */
 const fetchValidatorList = async (lcdUrl: string) => {
-	// initialize validators array
 	const validators: Validator[] = [];
-
-	// initialize next key
 	let nextKey: string | null = null;
 
-	// fetch validators - use paging to ensure all validators are fetched
-	// pagination key must be encoded and come before the limit
 	do {
 		try {
 			const url = `${lcdUrl}${VALIDATOR_LIST_ENDPOINT}${nextKey ? `?pagination.key=${encodeURIComponent(nextKey)}` : ''}${
 				VALIDATOR_LIST_PAGE_SIZE ? `${nextKey ? '&' : '?'}pagination.limit=${VALIDATOR_LIST_PAGE_SIZE}` : ''
 			}`;
 			const response = await fetch(url);
-			const data = (await response.json()) as ValidatorResponse;
-			if (!data.validators) {
-				break;
+
+			if (!response.ok) {
+				throw new Error(`Failed to fetch validators: ${response.status} ${response.statusText}`);
 			}
+
+			const data = (await response.json()) as ValidatorResponse;
+
+			if (!data.validators || !Array.isArray(data.validators)) {
+				throw new Error('Invalid validator response: missing validators array');
+			}
+
 			validators.push(...data.validators);
 			nextKey = data.pagination.next_key;
 		} catch (error) {
-			console.error(error);
-			break;
+			console.error('Error fetching validators:', error);
+			throw error; // Re-throw to be handled by the caller
 		}
 	} while (nextKey);
 
@@ -68,10 +77,26 @@ const fetchValidatorList = async (lcdUrl: string) => {
  * @returns The logo url
  */
 async function fetchLogoFromKeybase(keybaseUsername: string) {
-	const url = `https://keybase.io/_/api/1.0/user/lookup.json?key_suffix=${keybaseUsername}`;
-	const response = await fetch(url);
-	const data = (await response.json()) as KeybaseResponse;
-	return data?.them?.[0]?.pictures?.primary?.url;
+	try {
+		const url = `https://keybase.io/_/api/1.0/user/lookup.json?key_suffix=${keybaseUsername}`;
+		const response = await fetch(url);
+
+		if (!response.ok) {
+			throw new Error(`Failed to fetch Keybase data: ${response.status} ${response.statusText}`);
+		}
+
+		const data = (await response.json()) as KeybaseResponse;
+
+		// Validate response structure
+		if (!data.them?.[0]?.pictures?.primary?.url) {
+			return null;
+		}
+
+		return data.them[0].pictures.primary.url;
+	} catch (error) {
+		console.error(`Error fetching Keybase data for ${keybaseUsername}:`, error);
+		return null;
+	}
 }
 
 /**
@@ -95,53 +120,66 @@ async function fetchValidatorImages(validators: Validator[]) {
 /* Main */
 export default {
 	async fetch(request, env, ctx): Promise<Response> {
-		// fetch chain id from params
-		const url = new URL(request.url);
-		const chainId = url.searchParams.get('chain-id');
+		try {
+			// fetch chain id from params
+			const url = new URL(request.url);
+			const chainId = url.searchParams.get('chain-id');
 
-		// return bad request if no chain id
-		if (!chainId) {
-			return new Response('Bad Request - Missing chain-id', { status: 400 });
-		}
-
-		// return bad request if chain id is not valid
-		if (!Object.values(ValidChainIds).includes(chainId as ValidChainIds)) {
-			return new Response('Bad Request - Invalid chain-id', { status: 400 });
-		}
-
-		// fetch chain info using chain id from xion assets repo
-		const chainInfo = await fetchChainInfo(chainId as ValidChainIds);
-
-		// if no chain id, return bad request
-		if (!chainInfo) {
-			return new Response('Bad Request - No chain info', { status: 400 });
-		}
-
-		// query validator list from lcd
-		const validatorList = await fetchValidatorList(chainInfo.apis.rest[0].address);
-
-		// if no validator list, return bad request
-		if (!validatorList) {
-			return new Response('Bad Request - No validator list', { status: 400 });
-		}
-
-		// for each validator, fetch logo from keybase based on identity
-		const validatorImages = await fetchValidatorImages(validatorList);
-
-		// convert to a plain object for JSON serialization
-		const validatorImagesDict = Object.fromEntries(validatorImages);
-
-		// return a map of validator address to logo
-		return new Response(
-			JSON.stringify({
-				[chainId]: validatorImagesDict,
-			}),
-			{
-				status: 200,
-				headers: {
-					'Content-Type': 'application/json',
-				},
+			// return bad request if no chain id
+			if (!chainId) {
+				return new Response(JSON.stringify({ error: 'Missing chain-id parameter' }), {
+					status: 400,
+					headers: { 'Content-Type': 'application/json' },
+				});
 			}
-		);
+
+			// return bad request if chain id is not valid
+			if (!Object.values(ValidChainIds).includes(chainId as ValidChainIds)) {
+				return new Response(JSON.stringify({ error: 'Invalid chain-id' }), {
+					status: 400,
+					headers: { 'Content-Type': 'application/json' },
+				});
+			}
+
+			// fetch chain info using chain id from xion assets repo
+			const chainInfo = await fetchChainInfo(chainId as ValidChainIds);
+
+			// query validator list from lcd
+			const validatorList = await fetchValidatorList(chainInfo.apis.rest[0].address);
+
+			// for each validator, fetch logo from keybase based on identity
+			const validatorImages = await fetchValidatorImages(validatorList);
+
+			// convert to a plain object for JSON serialization
+			const validatorImagesDict = Object.fromEntries(validatorImages);
+
+			// return a map of validator address to logo
+			return new Response(
+				JSON.stringify({
+					chainId,
+					validators: validatorImagesDict,
+					timestamp: new Date().toISOString(),
+				}),
+				{
+					status: 200,
+					headers: {
+						'Content-Type': 'application/json',
+						'Cache-Control': 'public, max-age=3600',
+					},
+				}
+			);
+		} catch (error) {
+			console.error('Error processing request:', error);
+			return new Response(
+				JSON.stringify({
+					error: 'Internal server error',
+					message: error instanceof Error ? error.message : 'Unknown error',
+				}),
+				{
+					status: 500,
+					headers: { 'Content-Type': 'application/json' },
+				}
+			);
+		}
 	},
 } satisfies ExportedHandler<Env>;
