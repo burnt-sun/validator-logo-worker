@@ -57,5 +57,5 @@ pnpm install
 wrangler dev
 
 # Deploy to Cloudflare
-wrangler publish
+wrangler deploy
 ```
