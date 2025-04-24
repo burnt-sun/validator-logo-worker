@@ -143,7 +143,10 @@ export default {
 			if (!chainId) {
 				return new Response(JSON.stringify({ error: 'Missing chain-id parameter' }), {
 					status: 400,
-					headers: { 'Content-Type': 'application/json' },
+					headers: {
+						...corsHeaders,
+						'Content-Type': 'application/json',
+					},
 				});
 			}
 
@@ -151,7 +154,10 @@ export default {
 			if (!Object.values(ValidChainIds).includes(chainId as ValidChainIds)) {
 				return new Response(JSON.stringify({ error: 'Invalid chain-id' }), {
 					status: 400,
-					headers: { 'Content-Type': 'application/json' },
+					headers: {
+						...corsHeaders,
+						'Content-Type': 'application/json',
+					},
 				});
 			}
 
